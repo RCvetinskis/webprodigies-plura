@@ -1,8 +1,11 @@
 "use client";
 import { Agency } from "@prisma/client";
-import { useToast } from "../ui/use-toast";
+import { useForm } from "react-hook-form";
+import React, { useEffect, useState } from "react";
+import { NumberInput } from "@tremor/react";
+import { v4 } from "uuid";
+
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,6 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "../ui/alert-dialog";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Card,
   CardContent,
@@ -21,7 +25,6 @@ import {
   CardHeader,
   CardTitle,
 } from "../ui/card";
-import { Loader2 } from "lucide-react";
 import {
   Form,
   FormControl,
@@ -31,25 +34,26 @@ import {
   FormLabel,
   FormMessage,
 } from "../ui/form";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useToast } from "../ui/use-toast";
+
 import * as z from "zod";
 import FileUpload from "../global/file-upload";
 import { Input } from "../ui/input";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { NumberInput } from "@tremor/react";
 import {
   deleteAgency,
   initUser,
   saveActivityLogsNotification,
   updateAgencyDetails,
+  upsertAgency,
 } from "@/lib/queries";
-import { initCustomTraceSubscriber } from "next/dist/build/swc";
+import { Button } from "../ui/button";
+import Loading from "../global/loading";
 
 type Props = {
   data?: Partial<Agency>;
 };
+
 const FormSchema = z.object({
   name: z.string().min(2, { message: "Agency name must be atleast 2 chars." }),
   companyEmail: z.string().min(1),
@@ -62,19 +66,19 @@ const FormSchema = z.object({
   country: z.string().min(1),
   agencyLogo: z.string().min(1),
 });
+
 const AgencyDetails = ({ data }: Props) => {
   const { toast } = useToast();
   const router = useRouter();
   const [deletingAgency, setDeletingAgency] = useState(false);
-
   const form = useForm<z.infer<typeof FormSchema>>({
     mode: "onChange",
     resolver: zodResolver(FormSchema),
     defaultValues: {
-      name: data?.name,
+      name: data?.name || "",
       companyEmail: data?.companyEmail,
       companyPhone: data?.companyPhone,
-      whiteLabel: data?.whiteLabel || false,
+      whiteLabel: data?.whiteLabel,
       address: data?.address,
       city: data?.city,
       zipCode: data?.zipCode,
@@ -84,16 +88,17 @@ const AgencyDetails = ({ data }: Props) => {
     },
   });
   const isLoading = form.formState.isSubmitting;
+
   useEffect(() => {
     if (data) {
       form.reset(data);
     }
   }, [data]);
 
-  const onSubmit = async (values: z.infer<typeof FormSchema>) => {
+  const handleSubmit = async (values: z.infer<typeof FormSchema>) => {
     try {
       let newUserData;
-      let customerId;
+      let custId;
       if (!data?.id) {
         const bodyData = {
           email: values.companyEmail,
@@ -117,31 +122,57 @@ const AgencyDetails = ({ data }: Props) => {
           },
         };
       }
-      //   TODO: custId
-      newUserData = await initUser({ role: "AGENCY_OWNER" });
-      if (!data?.customerId) {
-        // const respone = await
-      }
-    } catch (error) {}
-  };
 
+      newUserData = await initUser({ role: "AGENCY_OWNER" });
+      if (!data?.id) {
+        await upsertAgency({
+          id: data?.id ? data.id : v4(),
+          address: values.address,
+          agencyLogo: values.agencyLogo,
+          city: values.city,
+          companyPhone: values.companyPhone,
+          country: values.country,
+          name: values.name,
+          state: values.state,
+          whiteLabel: values.whiteLabel,
+          zipCode: values.zipCode,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          companyEmail: values.companyEmail,
+          connectAccountId: "",
+          goal: 5,
+        });
+        toast({
+          title: "Created Agency",
+        });
+        return router.refresh();
+      }
+    } catch (error) {
+      console.log(error);
+      toast({
+        variant: "destructive",
+        title: "Oppse!",
+        description: "could not create your agency",
+      });
+    }
+  };
   const handleDeleteAgency = async () => {
     if (!data?.id) return;
     setDeletingAgency(true);
-    // TODO: discontinue the subscription
+    //WIP: discontinue the subscription
     try {
       const response = await deleteAgency(data.id);
       toast({
         title: "Deleted Agency",
-        description: "Deleted your agency and all subaccounts.",
+        description: "Deleted your agency and all subaccounts",
       });
       router.refresh();
     } catch (error) {
       console.log(error);
       toast({
         variant: "destructive",
-        title: "Opps!",
-        description: "Could not delete your agency",
+        title: "Oppse!",
+        description: "could not delete your agency ",
       });
     }
     setDeletingAgency(false);
@@ -159,7 +190,10 @@ const AgencyDetails = ({ data }: Props) => {
         </CardHeader>
         <CardContent>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form
+              onSubmit={form.handleSubmit(handleSubmit)}
+              className="space-y-4"
+            >
               <FormField
                 disabled={isLoading}
                 control={form.control}
@@ -228,27 +262,25 @@ const AgencyDetails = ({ data }: Props) => {
                 disabled={isLoading}
                 control={form.control}
                 name="whiteLabel"
-                render={({ field }) => {
-                  return (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border gap-4 p-4">
-                      <div>
-                        <FormLabel>Whitelabel Agency</FormLabel>
-                        <FormDescription>
-                          Turning on whilelabel mode will show your agency logo
-                          to all sub accounts by default. You can overwrite this
-                          functionality through sub account settings.
-                        </FormDescription>
-                      </div>
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border gap-4 p-4">
+                    <div>
+                      <FormLabel>Whitelabel Agency</FormLabel>
+                      <FormDescription>
+                        Turning on whilelabel mode will show your agency logo to
+                        all sub accounts by default. You can overwrite this
+                        functionality through sub account settings.
+                      </FormDescription>
+                    </div>
 
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  );
-                }}
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
               />
               <FormField
                 disabled={isLoading}
@@ -336,7 +368,7 @@ const AgencyDetails = ({ data }: Props) => {
                       await updateAgencyDetails(data.id, { goal: val });
                       await saveActivityLogsNotification({
                         agencyId: data.id,
-                        description: `Updated the agency goal to |${val} Sub Accoutns `,
+                        description: `Updated the agency goal to | ${val} Sub Account`,
                         subaccountId: undefined,
                       });
                       router.refresh();
@@ -344,21 +376,17 @@ const AgencyDetails = ({ data }: Props) => {
                     min={1}
                     className="bg-background !border !border-input"
                     placeholder="Sub Account Goal"
-                  ></NumberInput>
+                  />
                 </div>
               )}
               <Button type="submit" disabled={isLoading}>
-                {isLoading ? (
-                  <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-                ) : (
-                  "Save Agency Information"
-                )}
+                {isLoading ? <Loading /> : "Save Agency Information"}
               </Button>
             </form>
           </Form>
 
-          {!data?.id && (
-            <div className="flex flex-col  md:flex-row items-center justify-between rounded-lg border border-destructive gap-4 p-4 mt-4">
+          {data?.id && (
+            <div className="flex flex-col xl:flex-row items-center justify-between rounded-lg border border-destructive gap-4 p-4 mt-4">
               <div>
                 <div>Danger Zone</div>
               </div>
@@ -369,7 +397,7 @@ const AgencyDetails = ({ data }: Props) => {
               </div>
               <AlertDialogTrigger
                 disabled={isLoading || deletingAgency}
-                className="text-red-600 p-2 text-center mt-2 rounded-md hover:bg-red-600 hover:text-white whitespace-nowrap"
+                className="text-red-600 p-2 text-center mt-2 rounded-md hove:bg-red-600 hover:text-white whitespace-nowrap"
               >
                 {deletingAgency ? "Deleting..." : "Delete Agency"}
               </AlertDialogTrigger>
