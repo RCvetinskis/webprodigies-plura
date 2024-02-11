@@ -1,5 +1,4 @@
-import UserDetails from "@/components/forms/user-details";
-import Blurpage from "@/components/global/blur-page";
+import BlurPage from "@/components/global/blur-page";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,6 +8,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { db } from "@/lib/db";
+import { stripe } from "@/lib/stripe";
+import { getStripeOAuthLink } from "@/lib/utils";
 import { CheckCircleIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -22,14 +23,16 @@ type Props = {
   params: { subaccountId: string };
 };
 
-const Page = async ({ searchParams, params }: Props) => {
+const LaunchPad = async ({ params, searchParams }: Props) => {
   const subaccountDetails = await db.subAccount.findUnique({
     where: {
       id: params.subaccountId,
     },
   });
 
-  if (!subaccountDetails) return;
+  if (!subaccountDetails) {
+    return;
+  }
 
   const allDetailsExist =
     subaccountDetails.address &&
@@ -41,8 +44,33 @@ const Page = async ({ searchParams, params }: Props) => {
     subaccountDetails.name &&
     subaccountDetails.state;
 
+  const stripeOAuthLink = getStripeOAuthLink(
+    "subaccount",
+    `launchpad___${subaccountDetails.id}`
+  );
+
+  let connectedStripeAccount = false;
+
+  if (searchParams.code) {
+    if (!subaccountDetails.connectAccountId) {
+      try {
+        const response = await stripe.oauth.token({
+          grant_type: "authorization_code",
+          code: searchParams.code,
+        });
+        await db.subAccount.update({
+          where: { id: params.subaccountId },
+          data: { connectAccountId: response.stripe_user_id },
+        });
+        connectedStripeAccount = true;
+      } catch (error) {
+        console.log("🔴 Could not connect stripe account", error);
+      }
+    }
+  }
+
   return (
-    <Blurpage>
+    <BlurPage>
       <div className="flex flex-col justify-center items-center">
         <div className="w-full h-full max-w-[800px]">
           <Card className="border-none ">
@@ -80,6 +108,20 @@ const Page = async ({ searchParams, params }: Props) => {
                     used to run payouts.
                   </p>
                 </div>
+                {subaccountDetails.connectAccountId ||
+                connectedStripeAccount ? (
+                  <CheckCircleIcon
+                    size={50}
+                    className=" text-primary p-2 flex-shrink-0"
+                  />
+                ) : (
+                  <Link
+                    className="bg-primary py-2 px-4 rounded-md text-white"
+                    href={stripeOAuthLink}
+                  >
+                    Start
+                  </Link>
+                )}
               </div>
               <div className="flex justify-between items-center w-full h-20 border p-4 rounded-lg">
                 <div className="flex items-center gap-4">
@@ -110,8 +152,8 @@ const Page = async ({ searchParams, params }: Props) => {
           </Card>
         </div>
       </div>
-    </Blurpage>
+    </BlurPage>
   );
 };
 
-export default Page;
+export default LaunchPad;
